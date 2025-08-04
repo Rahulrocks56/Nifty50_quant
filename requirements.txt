@@ -1,0 +1,8 @@
+streamlit
+plotly
+pandas
+numpy
+websockets
+xgboost
+python-telegram-bot
+requests
