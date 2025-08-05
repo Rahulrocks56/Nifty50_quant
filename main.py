@@ -186,5 +186,6 @@ if not df.empty:
         if send_telegram_alert(alert_msg):
             st.toast(f"Telegram alert sent: {alert_msg}")
         else:
-            st.warning("⚠️
+            st.warning("⚠️ Telegram alert failed.")
+
 
