@@ -1,6 +1,9 @@
 streamlit
 websocket-client
 pandas
+numpy
 plotly
 requests
-
+python-telegram-bot
+mplfinance
+ta
