@@ -16,7 +16,7 @@ BOT_TOKEN = "8327184356:AAFGyU3lQdCm7NbdNEDzkRrwmc6NXw6bb54"
 CHAT_ID = "8194487348"
 
 # 🔁 Auto-refresh every 10 seconds
-st_autorefresh(interval=2000, limit=None, key="refresh")
+st_autorefresh(interval=10000, limit=None, key="refresh")
 st.set_page_config(layout="wide")
 
 # 📦 Session setup
@@ -64,10 +64,28 @@ def on_error(ws, err): print("⚠️ WebSocket error:", err)
 def on_close(ws, code, reason): print("🔒 Closed:", code, reason)
 
 # 🔗 Authorization helpers
+import requests
+
 def authorize_websocket():
-    url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    return requests.post(url, headers=headers).json()["data"]["authorization"]["url"]
+    url = "https://api.upstox.com/feed/authorize"  # Replace with your actual URL
+    headers = {
+        "Authorization": "Bearer your_token_here",  # Make sure token is correct
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers)
+    
+    try:
+        resp_json = response.json()
+        print("🔍 Auth Response:", json.dumps(resp_json, indent=2))
+
+        return resp_json["data"]["authorization"]["url"]
+    except KeyError as e:
+        print(f"❌ KeyError: Missing {e} in response. Full response:\n{resp_json}")
+        return None
+    except Exception as e:
+        print(f"❌ Exception while authorizing WebSocket:", str(e))
+        return None
 
 def fetch_nifty_token():
     url = "https://api.upstox.com/v2/instruments"
@@ -195,6 +213,7 @@ if not df.empty:
             st.toast(f"Telegram alert sent: {alert_msg}")
         else:
             st.warning("⚠️ Telegram alert failed.")
+
 
 
 
