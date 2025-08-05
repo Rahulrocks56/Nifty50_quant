@@ -1,81 +1,43 @@
 import streamlit as st
-import websocket
-import json
-from datetime import datetime
-import threading
+import pandas as pd
+import plotly.graph_objects as go
+import numpy as np
+import time
 
-# 💬 App Config
-st.set_page_config(page_title="📈 Nifty 50 Tracker", layout="centered")
-st.title("📊 Nifty 50 Real-Time Price")
+st.set_page_config(page_title="Nifty 50 Simulator", layout="wide")
 
-price_box = st.empty()
-time_box = st.empty()
-warning_box = st.empty()
+# Initialize session state
+if "price_data" not in st.session_state:
+    st.session_state.price_data = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"])
 
-# 🔐 Replace with actual values
-UPSTOX_TOKEN = "your_actual_token_here"
-NIFTY_50_TOKEN_ID = "your_instrument_token_here"  # Use correct instrument ID from Upstox
-
-# 📡 Message Handler
-def on_message(ws, message):
-    try:
-        data = json.loads(message)
-        payload = data.get("data", [{}])[0]
-
-        # Extract values
-        instrument_token = payload.get("instrument_token")
-        ltp = payload.get("ltp")
-        timestamp = payload.get("exchange_timestamp")
-
-        if ltp and timestamp:
-            readable_time = datetime.fromtimestamp(timestamp / 1000)
-
-            price_box.metric("💰 Nifty 50 Price", f"₹{ltp:,.2f}")
-            time_box.caption(f"Last updated: {readable_time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            if ltp < 20000:
-                warning_box.warning("⚠️ Received suspiciously low price. Please verify the instrument ID.")
-            else:
-                warning_box.empty()
-
-            print(f"[{readable_time}] Token: {instrument_token} | Price: ₹{ltp}")
-        else:
-            st.error("⚠️ Incomplete data received.")
-
-    except Exception as e:
-        st.error(f"Error parsing WebSocket message: {e}")
-        print("Message Error:", e)
-
-# 🚪 Connection Events
-def on_open(ws):
-    print("✅ WebSocket connected. Subscribing to Nifty 50...")
-    payload = {
-        "guid": "nifty_stream",
-        "method": "sub",
-        "data": {
-            "instrument_tokens": [int(NIFTY_50_TOKEN_ID)]
-        }
+# Simulate new ticks
+def generate_tick():
+    base = 24500
+    spread = np.random.randint(-20, 20)
+    tick = {
+        "timestamp": pd.Timestamp.now(),
+        "open": base + spread,
+        "high": base + spread + np.random.randint(0, 10),
+        "low": base + spread - np.random.randint(0, 10),
+        "close": base + spread + np.random.randint(-5, 5)
     }
-    ws.send(json.dumps(payload))
+    return tick
 
-def on_error(ws, error):
-    st.error(f"WebSocket error: {error}")
-    print("WebSocket Error:", error)
+# Real-time tick stream
+placeholder = st.empty()
+while True:
+    tick = generate_tick()
+    new_row = pd.DataFrame([tick])
+    st.session_state.price_data = pd.concat([st.session_state.price_data, new_row]).tail(30)
 
-def on_close(ws):
-    st.info("WebSocket connection closed.")
-    print("Connection closed.")
+    fig = go.Figure(data=[go.Candlestick(
+        x=st.session_state.price_data["timestamp"],
+        open=st.session_state.price_data["open"],
+        high=st.session_state.price_data["high"],
+        low=st.session_state.price_data["low"],
+        close=st.session_state.price_data["close"]
+    )])
+    fig.update_layout(title="Live Nifty 50 Simulated Chart", xaxis_rangeslider_visible=False)
 
-# 🔄 Start WebSocket in thread
-def run_ws():
-    ws = websocket.WebSocketApp(
-        "wss://api.upstox.com/feed/market-data",
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close,
-        header={"Authorization": f"Bearer {UPSTOX_TOKEN}"}
-    )
-    ws.run_forever()
-
-threading.Thread(target=run_ws, daemon=True).start()
+    placeholder.plotly_chart(fig, use_container_width=True)
+    time.sleep(5)
