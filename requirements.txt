@@ -1,9 +1,7 @@
 streamlit
+streamlit-autorefresh
 pandas
-numpy
-websocket-client
-requests
 plotly
-xgboost
-python-telegram-bot
-ta
+requests
+upstox-python
+websocket-client
