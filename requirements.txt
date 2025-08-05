@@ -7,3 +7,5 @@ requests
 python-telegram-bot
 mplfinance
 ta
+upstox-python-sdk>=2.17.0
+
