@@ -1,102 +1,51 @@
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-import requests
-import time
+import json
+import websocket
 import threading
 
-# Upstox SDK v2 imports
-import upstox_client
-from upstox_client import Configuration, WebSocketClient
-from upstox_client.models import *
-from upstox_client.rest import ApiException
+# Replace these with your actual credentials
+ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyMmJhOGIzYzczZDI0OGFjYzBmMjIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQwOTg5NiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NDMxMjAwfQ.xHVVju2nTY1eAtyCXVFHegoW_DPrNH65pGNWBsy0vfI"
+INSTRUMENT_TOKEN = "26128"  # Example: 'NSE_INDEX|Nifty 50'
 
-# --------------------------- Token Fetcher ---------------------------
-def get_nifty_token():
-    url = "https://assets.upstox.com/instruments/instruments.json"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        instruments = response.json()
-        for instrument in instruments:
-            if instrument.get("instrument_key") == "NSE_INDEX|Nifty 50":
-                token = int(instrument.get("exchange_token"))
-                print(f"✅ Nifty 50 Token Found: {token}")
-                return token
-        print("❌ Nifty 50 not found.")
-    except Exception as e:
-        print("Instrument fetch error:", e)
-    return None
+# Define WebSocket URL
+UPSTOX_FEED_URL = "wss://api.upstox.com/feed/market-data"
 
-# --------------------------- App Settings ---------------------------
-st.set_page_config(page_title="Nifty 50 Live Tracker", layout="wide")
+def on_open(ws):
+    print("WebSocket connection opened.")
 
-API_KEY = "your_api_key_here"
-ACCESS_TOKEN = "your_access_token_here"
-NIFTY_TOKEN = get_nifty_token()
-
-# --------------------------- Session State ---------------------------
-if "price_data" not in st.session_state:
-    st.session_state.price_data = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"])
-
-placeholder = st.empty()
-
-# --------------------------- Tick Handler ---------------------------
-def handle_tick(data):
-    try:
-        tick = data["data"]
-        ltp = tick["last_price"]
-        timestamp = pd.Timestamp.now()
-
-        new_row = {
-            "timestamp": timestamp,
-            "open": ltp,
-            "high": ltp + 10,
-            "low": ltp - 10,
-            "close": ltp
+    # Sample subscription payload
+    subscribe_payload = {
+        "token": ACCESS_TOKEN,
+        "type": "subscribe",
+        "payload": {
+            "instruments": [INSTRUMENT_TOKEN]
         }
+    }
 
-        df = pd.DataFrame([new_row])
-        st.session_state.price_data = pd.concat([st.session_state.price_data, df]).tail(30)
+    ws.send(json.dumps(subscribe_payload))
 
-        fig = go.Figure(data=[go.Candlestick(
-            x=st.session_state.price_data["timestamp"],
-            open=st.session_state.price_data["open"],
-            high=st.session_state.price_data["high"],
-            low=st.session_state.price_data["low"],
-            close=st.session_state.price_data["close"]
-        )])
-        fig.update_layout(title="📈 Nifty 50 Live Candlestick Chart", xaxis_rangeslider_visible=False)
-        placeholder.plotly_chart(fig, use_container_width=True)
+def on_message(ws, message):
+    try:
+        data = json.loads(message)
+        print("📈 Incoming Market Data:", data)
     except Exception as e:
-        print("Tick parse error:", e)
+        print("❌ Error parsing message:", str(e))
 
-# --------------------------- WebSocket Setup ---------------------------
+def on_error(ws, error):
+    print("⚠️ WebSocket error:", error)
+
+def on_close(ws, close_status_code, close_msg):
+    print("🔒 WebSocket closed:", close_status_code, close_msg)
+
 def start_websocket():
-    config = Configuration()
-    config.access_token = ACCESS_TOKEN
-    config.api_key = API_KEY
+    ws = websocket.WebSocketApp(
+        UPSTOX_FEED_URL,
+        on_open=on_open,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close
+    )
+    ws.run_forever()
 
-    ws_client = WebSocketClient(configuration=config)
-
-    def on_message(ws, message):
-        handle_tick(message)
-
-    def on_error(ws, error):
-        print("WebSocket Error:", error)
-
-    def on_close(ws):
-        print("WebSocket Closed")
-
-    ws_client.on_message = on_message
-    ws_client.on_error = on_error
-    ws_client.on_close = on_close
-
-    ws_client.connect()
-    ws_client.subscribe([str(NIFTY_TOKEN)], "full")
-
-# --------------------------- Launch WebSocket ---------------------------
-if NIFTY_TOKEN:
+if __name__ == "__main__":
+    print("🚀 Starting Nifty 50 tracker...")
     threading.Thread(target=start_websocket).start()
-else:
-    st.error("Nifty 50 token not found. Unable to stream live data.")
