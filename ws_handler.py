@@ -1,59 +1,52 @@
-import asyncio
-import websockets
+import websocket
 import json
-import pandas as pd
-from datetime import datetime
+import threading
 
-# 📌 Upstox-compatible instrument tokens (you can expand this list)
-NIFTY_TOKENS = ["NSE_INDEX_NIFTY"]  # Add more tokens like 'NSE_STOCK_RELIANCE' as needed
+ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyMmJhOGIzYzczZDI0OGFjYzBmMjIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQwOTg5NiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NDMxMjAwfQ.xHVVju2nTY1eAtyCXVFHegoW_DPrNH65pGNWBsy0vfI"
+API_KEY = "5b4d759d-de81-4291-8717-ef088ae5a6f9"
+INSTRUMENT_TOKEN = "nse_index.nifty"
+WS_URL = "wss://feedapi.upstox.com"
 
-# 📦 Cache to hold latest ticks for indicator calculations
-price_data = []
+price_data = {}
 
-# 📡 Format subscription message
-def build_subscribe_payload(tokens):
-    return json.dumps({
-        "guid": "rahul-nifty-tracker",
-        "method": "sub",
-        "data": {"symbols": tokens}
-    })
+def on_open(ws):
+    # Step 1: Authenticate
+    auth_msg = {
+        "headers": {
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "apiKey": API_KEY
+        },
+        "method": "authenticate"
+    }
+    ws.send(json.dumps(auth_msg))
 
-# 📈 Public function to get the latest DataFrame (used by main.py)
-def get_live_data():
-    if not price_data:
-        return None
-    return pd.DataFrame(price_data, columns=["timestamp", "close"])
+def on_message(ws, message):
+    data = json.loads(message)
 
-# 🚀 WebSocket Client
-async def stream_prices():
-    uri = "wss://api.upstox.com/feed/websocket"  # Replace if a different endpoint
-    async with websockets.connect(uri) as ws:
-        await ws.send(build_subscribe_payload(NIFTY_TOKENS))
+    # Step 2: Parse Quote Update
+    if data.get("type") == "feed_update":
+        payload = data.get("payload", [{}])[0]
+        symbol = payload.get("instrument", "")
+        ltp = payload.get("last_price")
+        if symbol and ltp is not None:
+            price_data[symbol] = ltp
+            print(f"{symbol}: {ltp}")
 
-        while True:
-            try:
-                message = await ws.recv()
-                data = json.loads(message)
+def on_error(ws, error):
+    print("WebSocket error:", error)
 
-                # 🧠 Handle quote messages
-                if data.get("type") == "quote":
-                    ltp = data["data"].get("ltp")
-                    ts = datetime.now().strftime("%H:%M:%S")
+def on_close(ws, close_status_code, close_msg):
+    print("WebSocket closed")
 
-                    if ltp is not None:
-                        # Save to price stream
-                        price_data.append([ts, ltp])
+def stream_prices():
+    def run():
+        ws = websocket.WebSocketApp(
+            WS_URL,
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error,
+            on_close=on_close
+        )
+        ws.run_forever()
 
-                        # ⏳ Keep latest 100 ticks only
-                        if len(price_data) > 100:
-                            price_data.pop(0)
-
-            except Exception as e:
-                print(f"WebSocket Error: {e}")
-                continue
-
-# 🧵 Threading wrapper for use in main.py
-def start_stream():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(stream_prices())
+    threading.Thread(target=run).start()
