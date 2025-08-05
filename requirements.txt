@@ -1,5 +1,8 @@
 streamlit
-streamlit-autorefresh
+websocket-client
 pandas
 plotly
 requests
+python-telegram-bot
+mplfinance
+ta
