@@ -15,7 +15,7 @@ ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.e
 BOT_TOKEN = "8327184356:AAFGyU3lQdCm7NbdNEDzkRrwmc6NXw6bb54"
 CHAT_ID = "8194487348"
 
-# 🔁 Auto-refresh every 2 seconds
+# 🔁 Auto-refresh every 10 seconds
 st_autorefresh(interval=2000, limit=None, key="refresh")
 st.set_page_config(layout="wide")
 
@@ -33,15 +33,23 @@ def on_message(ws, message):
     try:
         feed = pb.FeedResponse()
         feed.ParseFromString(message)
-        data = MessageToDict(feed).get("data", {}).get("payload", {})
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.session_state.latest_tick = {
-            "timestamp": ts,
-            "price": float(data.get("ltp", 0)),
-            "volume": int(data.get("volume", 0))
-        }
+        data = MessageToDict(feed)
+        payload = data.get("data", {}).get("payload", {})
+
+        # 🔍 Log the full payload to verify structure
+        print("📦 Incoming Payload:", json.dumps(payload, indent=2))
+
+        if "ltp" in payload:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.latest_tick = {
+                "timestamp": ts,
+                "price": float(payload["ltp"]),
+                "volume": int(payload.get("volume", 0))
+            }
+        else:
+            print("⚠️ 'ltp' missing in payload. Tick skipped.")
     except Exception as e:
-        print("❌ Protobuf decode failed:", e)
+        print("❌ Protobuf decode failed:", str(e))
 
 def on_open(ws):
     token = fetch_nifty_token()
@@ -187,5 +195,6 @@ if not df.empty:
             st.toast(f"Telegram alert sent: {alert_msg}")
         else:
             st.warning("⚠️ Telegram alert failed.")
+
 
 
