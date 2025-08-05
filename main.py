@@ -1,86 +1,187 @@
+import streamlit as st
+import pandas as pd
+import datetime
 import requests
+import plotly.graph_objects as go
+import threading
 import json
 import websocket
-import threading
+from streamlit_autorefresh import st_autorefresh
+from google.protobuf.json_format import MessageToDict
+from upstox_client.feeder.proto import MarketDataFeedV3_pb2 as pb
 
-# 🔐 Replace with your actual Upstox access token
+# 🛡️ Replace with your actual credentials
 ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyMmJhOGIzYzczZDI0OGFjYzBmMjIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQwOTg5NiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NDMxMjAwfQ.xHVVju2nTY1eAtyCXVFHegoW_DPrNH65pGNWBsy0vfI"
+BOT_TOKEN = "your_bot_token"
+CHAT_ID = "your_chat_id"
 
-# 🧩 Step 1: Fetch instrument token for Nifty 50
-def get_nifty_token():
-    url = "https://api.upstox.com/v2/instruments"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        instruments = response.json()["data"]
-        for instrument in instruments:
-            if instrument["segment"] == "NSE_INDEX" and instrument["trading_symbol"] == "NIFTY 50":
-                return instrument["instrument_token"]
-        print("⚠️ Nifty 50 token not found in instruments list.")
-        return None
-    else:
-        print("❌ Failed to fetch instruments:", response.status_code, response.text)
-        return None
+# 🔁 Streamlit Config
+st_autorefresh(interval=2000, limit=None, key="refresh")
+st.set_page_config(layout="wide")
 
-# 🔐 Step 2: Authorize WebSocket session
-def get_websocket_url():
-    url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+# 🗃️ Session State Setup
+for key in ["ohlcv", "latest_tick", "last_trend", "ws_thread"]:
+    if key not in st.session_state:
+        st.session_state[key] = {} if key == "ohlcv" else None
+st.session_state.ohlcv.update({
+    "timestamp": [], "open": [], "high": [],
+    "low": [], "close": [], "volume": []
+})
 
-    response = requests.post(url, headers=headers)
-    if response.status_code == 200:
-        return response.json()["data"]["authorization"]["url"]
-    else:
-        print("❌ WebSocket authorization failed:", response.status_code, response.text)
-        return None
+# 📡 WebSocket Handlers
+def on_message(ws, message):
+    try:
+        feed = pb.FeedResponse()
+        feed.ParseFromString(message)
+        data = MessageToDict(feed).get("data", {}).get("payload", {})
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.latest_tick = {
+            "timestamp": ts,
+            "price": float(data.get("ltp", 0)),
+            "volume": int(data.get("volume", 0))
+        }
+    except Exception as e:
+        print("❌ Protobuf error:", e)
 
-# 🔗 Step 3: WebSocket Handlers
 def on_open(ws):
-    print("✅ WebSocket connection opened.")
-    nifty_token = get_nifty_token()
-    if nifty_token:
+    token = fetch_nifty_token()
+    if token:
         payload = {
-            "guid": "rahul-nifty-guid",
+            "guid": "nifty-stream",
             "method": "subscribe",
             "data": {
-                "instrumentTokens": [nifty_token],
+                "instrumentTokens": [token],
                 "mode": "full"
             }
         }
         ws.send(json.dumps(payload))
-    else:
-        print("⚠️ Subscription skipped due to missing token.")
 
-def on_message(ws, message):
-    try:
-        data = json.loads(message)
-        print("📈 Market Data:", data)
-    except Exception as e:
-        print("❌ Message parsing error:", e)
+def on_error(ws, err): print("⚠️ WebSocket error:", err)
+def on_close(ws, code, reason): print("🔒 Closed:", code, reason)
 
-def on_error(ws, error):
-    print("⚠️ WebSocket error:", error)
+# 🔗 Authorization Helpers
+def authorize_websocket():
+    url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    return requests.post(url, headers=headers).json()["data"]["authorization"]["url"]
 
-def on_close(ws, code, reason):
-    print("🔒 Connection closed:", code, reason)
+def fetch_nifty_token():
+    url = "https://api.upstox.com/v2/instruments"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    instruments = requests.get(url, headers=headers).json()["data"]
+    for i in instruments:
+        if i["segment"] == "NSE_INDEX" and i["trading_symbol"] == "NIFTY 50":
+            return i["instrument_token"]
 
-def start_websocket(url):
-    ws = websocket.WebSocketApp(
-        url,
+def start_websocket():
+    ws_url = authorize_websocket()
+    ws = websocket.WebSocketApp(ws_url,
         on_open=on_open,
         on_message=on_message,
         on_error=on_error,
-        on_close=on_close
-    )
+        on_close=on_close)
     ws.run_forever()
 
-# 🚀 Main Execution
-if __name__ == "__main__":
-    print("🔐 Authorizing WebSocket...")
-    ws_url = get_websocket_url()
-    if ws_url:
-        print("🔗 Starting live Nifty 50 feed...")
-        threading.Thread(target=start_websocket, args=(ws_url,)).start()
+if not st.session_state.ws_thread:
+    thread = threading.Thread(target=start_websocket)
+    thread.start()
+    st.session_state.ws_thread = thread
+
+# 💾 Live Tick Access
+def receive_tick():
+    return st.session_state.latest_tick or {
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "price": 0,
+        "volume": 0
+    }
+
+def get_live_data():
+    tick = receive_tick()
+    ts = pd.to_datetime(tick["timestamp"])
+    ohlcv = st.session_state.ohlcv
+
+    if len(ohlcv["timestamp"]) == 0 or ts.minute != pd.to_datetime(ohlcv["timestamp"][-1]).minute:
+        for key in ohlcv: ohlcv[key].append(tick[key] if key != "timestamp" else ts)
     else:
-        print("❌ Could not retrieve WebSocket URL.")
+        ohlcv["high"][-1] = max(ohlcv["high"][-1], tick["price"])
+        ohlcv["low"][-1] = min(ohlcv["low"][-1], tick["price"])
+        ohlcv["close"][-1] = tick["price"]
+        ohlcv["volume"][-1] += tick["volume"]
+
+    return pd.DataFrame(ohlcv)
+
+# 📐 Indicators
+def calculate_indicators(df):
+    ema_9 = df["close"].ewm(span=9).mean()
+    ema_21 = df["close"].ewm(span=21).mean()
+    rsi = df["close"].rolling(14).apply(
+        lambda x: ((x.diff()[x.diff() > 0].sum() / x.diff().abs().sum()) * 100), raw=True)
+
+    df["H-L"] = df["high"] - df["low"]
+    df["H-PC"] = abs(df["high"] - df["close"].shift(1))
+    df["L-PC"] = abs(df["low"] - df["close"].shift(1))
+    df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
+    df["+DM"] = (df["high"] - df["high"].shift(1)).clip(lower=0)
+    df["-DM"] = (df["low"].shift(1) - df["low"]).clip(lower=0)
+    tr_smooth = df["TR"].rolling(14).mean()
+    plus_di = 100 * df["+DM"].rolling(14).mean() / tr_smooth
+    minus_di = 100 * df["-DM"].rolling(14).mean() / tr_smooth
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(14).mean()
+
+    return {
+        "RSI": rsi.iloc[-1] if not rsi.empty else None,
+        "EMA_9": ema_9.iloc[-1] if not ema_9.empty else None,
+        "EMA_21": ema_21.iloc[-1] if not ema_21.empty else None,
+        "ADX": adx.iloc[-1] if not adx.empty else None
+    }
+
+# 🧠 Signal Logic
+def check_trend(indicators):
+    if indicators["EMA_9"] > indicators["EMA_21"] and indicators["ADX"] > 25 and indicators["RSI"] > 60:
+        return "Strong Bullish"
+    elif indicators["EMA_9"] < indicators["EMA_21"] and indicators["ADX"] > 25 and indicators["RSI"] < 40:
+        return "Strong Bearish"
+    return "Neutral"
+
+def send_telegram_alert(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": msg}
+    return requests.post(url, data=data).status_code == 200
+
+# 📊 Chart Generator
+def render_chart(df):
+    fig = go.Figure(data=[go.Candlestick(
+        x=df["timestamp"],
+        open=df["open"], high=df["high"],
+        low=df["low"], close=df["close"]
+    )])
+    fig.update_layout(title="Nifty 50 Live Candlestick", xaxis_rangeslider_visible=False)
+    return fig
+
+# 🚀 Run Dashboard
+df = get_live_data()
+status_placeholder = st.empty()
+chart_placeholder = st.empty()
+col1, col2, col3, col4 = st.columns(4)
+
+if not df.empty:
+    indicators = calculate_indicators(df)
+    trend = check_trend(indicators)
+    ts = df["timestamp"].iloc[-1]
+    price = df["close"].iloc[-1]
+
+    status_placeholder.success(f"✅ Live • Last update: {ts}")
+    chart_placeholder.plotly_chart(render_chart(df), use_container_width=True)
+    col1.metric("Price", f"₹{price}")
+    col2.metric("Trend", trend)
+    col3.metric("RSI", f"{indicators['RSI']:.2f}")
+    col4.metric("ADX", f"{indicators['ADX']:.2f}")
+
+    if trend != st.session_state.last_trend and trend != "Neutral":
+        alert_msg = f"📊 {trend} Signal Triggered • RSI: {indicators['RSI']:.2f} • ADX: {indicators['ADX']:.2f}"
+        if send_telegram_alert(alert_msg):
+            st.toast(f"Sent: {alert_msg}")
+        else:
+            st.warning("⚠️ Telegram alert failed.")
+        st.session_state.last_trend = trend
