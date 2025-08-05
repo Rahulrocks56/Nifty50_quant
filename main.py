@@ -11,9 +11,9 @@ from upstox_client.feeder.proto import MarketDataFeedV3_pb2 as pb
 from streamlit_autorefresh import st_autorefresh
 
 # 🔐 Replace with your actual credentials
-ACCESS_TOKEN = "your_access_token"
-BOT_TOKEN = "your_telegram_bot_token"
-CHAT_ID = "your_telegram_chat_id"
+ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyMmJhOGIzYzczZDI0OGFjYzBmMjIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQwOTg5NiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NDMxMjAwfQ.xHVVju2nTY1eAtyCXVFHegoW_DPrNH65pGNWBsy0vfI"
+BOT_TOKEN = "8327184356:AAFGyU3lQdCm7NbdNEDzkRrwmc6NXw6bb54"
+CHAT_ID = "8194487348"
 
 # 🔁 Auto-refresh every 2 seconds
 st_autorefresh(interval=2000, limit=None, key="refresh")
@@ -187,3 +187,4 @@ if not df.empty:
             st.toast(f"Telegram alert sent: {alert_msg}")
         else:
             st.warning("⚠️
+
