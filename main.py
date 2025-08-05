@@ -1,11 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import numpy as np
-import time
 import requests
-from upstox_api.api import Upstox
-from upstox_api.websocket import WebSocket, LiveFeedType
+import time
+import threading
+
+# Upstox SDK v2 imports
+import upstox_client
+from upstox_client import Configuration, WebSocketClient
+from upstox_client.models import *
+from upstox_client.rest import ApiException
 
 # --------------------------- Token Fetcher ---------------------------
 def get_nifty_token():
@@ -29,7 +33,6 @@ st.set_page_config(page_title="Nifty 50 Live Tracker", layout="wide")
 
 API_KEY = "your_api_key_here"
 ACCESS_TOKEN = "your_access_token_here"
-
 NIFTY_TOKEN = get_nifty_token()
 
 # --------------------------- Session State ---------------------------
@@ -39,17 +42,18 @@ if "price_data" not in st.session_state:
 placeholder = st.empty()
 
 # --------------------------- Tick Handler ---------------------------
-def on_tick(tick):
+def handle_tick(data):
     try:
-        tick_data = tick['ltp']
+        tick = data["data"]
+        ltp = tick["last_price"]
         timestamp = pd.Timestamp.now()
 
         new_row = {
             "timestamp": timestamp,
-            "open": tick_data,
-            "high": tick_data + 10,
-            "low": tick_data - 10,
-            "close": tick_data
+            "open": ltp,
+            "high": ltp + 10,
+            "low": ltp - 10,
+            "close": ltp
         }
 
         df = pd.DataFrame([new_row])
@@ -67,26 +71,32 @@ def on_tick(tick):
     except Exception as e:
         print("Tick parse error:", e)
 
-def on_error(ws, error):
-    print("WebSocket Error:", error)
+# --------------------------- WebSocket Setup ---------------------------
+def start_websocket():
+    config = Configuration()
+    config.access_token = ACCESS_TOKEN
+    config.api_key = API_KEY
 
-def on_close(ws):
-    print("WebSocket Closed")
+    ws_client = WebSocketClient(configuration=config)
 
-def on_open(ws):
-    ws.subscribe(NIFTY_TOKEN, LiveFeedType.LTP)
+    def on_message(ws, message):
+        handle_tick(message)
 
-# --------------------------- Start WebSocket ---------------------------
+    def on_error(ws, error):
+        print("WebSocket Error:", error)
+
+    def on_close(ws):
+        print("WebSocket Closed")
+
+    ws_client.on_message = on_message
+    ws_client.on_error = on_error
+    ws_client.on_close = on_close
+
+    ws_client.connect()
+    ws_client.subscribe([str(NIFTY_TOKEN)], "full")
+
+# --------------------------- Launch WebSocket ---------------------------
 if NIFTY_TOKEN:
-    upstox = Upstox(API_KEY, ACCESS_TOKEN)
-    upstox.set_access_token(ACCESS_TOKEN)
-
-    socket = WebSocket(API_KEY, ACCESS_TOKEN)
-    socket.on_tick = on_tick
-    socket.on_error = on_error
-    socket.on_close = on_close
-    socket.on_open = on_open
-
-    socket.start_websocket()
+    threading.Thread(target=start_websocket).start()
 else:
     st.error("Nifty 50 token not found. Unable to stream live data.")
