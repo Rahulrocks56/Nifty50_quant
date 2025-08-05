@@ -1,8 +1,9 @@
 streamlit
-plotly
 pandas
 numpy
-websockets
+websocket-client
+requests
+plotly
 xgboost
 python-telegram-bot
-requests
+ta
