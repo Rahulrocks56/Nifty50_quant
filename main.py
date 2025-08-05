@@ -1,15 +1,17 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import logging
-import time
+import requests
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
 
-# 🔧 Config and logging
+# 🔁 Auto-refresh every 2 seconds
+st_autorefresh(interval=2000, limit=None, key="chart_refresh")
+
+# ⚙️ Streamlit config
 st.set_page_config(layout="wide")
-logging.basicConfig(level=logging.INFO)
 
-# 📦 Persistent OHLCV buffer
+# 📦 Persistent storage
 if "ohlcv" not in st.session_state:
     st.session_state.ohlcv = {
         "timestamp": [],
@@ -20,7 +22,10 @@ if "ohlcv" not in st.session_state:
         "volume": [],
     }
 
-# 🛰️ Simulated tick receiver — replace with actual Upstox tick
+if "last_trend" not in st.session_state:
+    st.session_state.last_trend = None
+
+# 📡 Simulated tick receiver — replace with live feed
 def receive_tick():
     return {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -28,14 +33,13 @@ def receive_tick():
         "volume": 1200
     }
 
-# 🔁 Get live OHLCV dataframe
+# 🔄 Get live OHLCV data
 def get_live_data():
     tick = receive_tick()
     ts = pd.to_datetime(tick["timestamp"])
     ohlcv = st.session_state.ohlcv
 
     if len(ohlcv["timestamp"]) == 0 or ts.minute != pd.to_datetime(ohlcv["timestamp"][-1]).minute:
-        # Start new candle
         ohlcv["timestamp"].append(ts)
         ohlcv["open"].append(tick["price"])
         ohlcv["high"].append(tick["price"])
@@ -43,7 +47,6 @@ def get_live_data():
         ohlcv["close"].append(tick["price"])
         ohlcv["volume"].append(tick["volume"])
     else:
-        # Update existing candle
         ohlcv["high"][-1] = max(ohlcv["high"][-1], tick["price"])
         ohlcv["low"][-1] = min(ohlcv["low"][-1], tick["price"])
         ohlcv["close"][-1] = tick["price"]
@@ -51,7 +54,7 @@ def get_live_data():
 
     return pd.DataFrame(ohlcv)
 
-# 📊 Candlestick renderer
+# 📊 Chart renderer
 def render_candlestick_chart(df):
     fig = go.Figure(data=[go.Candlestick(
         x=df["timestamp"],
@@ -63,13 +66,13 @@ def render_candlestick_chart(df):
     fig.update_layout(title="Nifty 50 Live Candlestick", xaxis_rangeslider_visible=False)
     return fig
 
-# 📈 Simple RSI calculator (demo version)
+# 📈 RSI calculator
 def calculate_indicators(df):
     rsi = df["close"].rolling(14).apply(
         lambda x: ((x.diff()[x.diff() > 0].sum() / x.diff().abs().sum()) * 100), raw=True)
     return {"RSI_14": rsi.iloc[-1] if not rsi.empty else None}
 
-# 🔔 Basic alert logic
+# 🔔 Trend alert logic
 def check_alerts(indicators):
     rsi_val = indicators.get("RSI_14", 0)
     if rsi_val > 60:
@@ -78,13 +81,20 @@ def check_alerts(indicators):
         return {"trend": "Bearish"}
     return {"trend": "Neutral"}
 
-# 🎯 UI layout
+# 📲 Telegram alert sender
+def send_telegram_alert(message):
+    token = "<YOUR_BOT_TOKEN>"
+    chat_id = "<YOUR_CHAT_ID>"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    data = {"chat_id": chat_id, "text": message}
+    response = requests.post(url, data=data)
+    return response.status_code == 200
+
+# 🚀 Main execution
+df = get_live_data()
 status_placeholder = st.empty()
 chart_placeholder = st.empty()
 metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
-
-# 🚀 Main refresh cycle
-df = get_live_data()
 
 if not df.empty:
     indicators = calculate_indicators(df)
@@ -99,6 +109,15 @@ if not df.empty:
     metrics_col2.metric("Trend", alerts["trend"])
     metrics_col3.metric("RSI", f"{indicators.get('RSI_14', '--'):.2f}")
 
-    # Wait and rerun safely
-    time.sleep(2)
-    st.experimental_rerun()
+    # 🔔 Alert trigger
+    current_trend = alerts["trend"]
+    last_trend = st.session_state.last_trend
+
+    if current_trend != last_trend and current_trend != "Neutral":
+        alert_msg = f"📊 Trend Change Alert: RSI indicates a {current_trend} setup."
+        if send_telegram_alert(alert_msg):
+            st.toast(f"Telegram alert sent: {alert_msg}")
+        else:
+            st.warning("⚠️ Failed to send Telegram alert.")
+
+    st.session_state.last_trend = current_trend
