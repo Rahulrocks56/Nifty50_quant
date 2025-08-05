@@ -1,52 +1,53 @@
 import websocket
 import json
 import threading
+import time
+import logging
 
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyMmJhOGIzYzczZDI0OGFjYzBmMjIiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQwOTg5NiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NDMxMjAwfQ.xHVVju2nTY1eAtyCXVFHegoW_DPrNH65pGNWBsy0vfI"
-API_KEY = "5b4d759d-de81-4291-8717-ef088ae5a6f9"
-INSTRUMENT_TOKEN = "nse_index.nifty"
-WS_URL = "wss://feedapi.upstox.com"
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-price_data = {}
-
-def on_open(ws):
-    # Step 1: Authenticate
-    auth_msg = {
-        "headers": {
-            "Authorization": f"Bearer {ACCESS_TOKEN}",
-            "apiKey": API_KEY
-        },
-        "method": "authenticate"
-    }
-    ws.send(json.dumps(auth_msg))
+# Global data holder
+live_data = {}
 
 def on_message(ws, message):
-    data = json.loads(message)
-
-    # Step 2: Parse Quote Update
-    if data.get("type") == "feed_update":
-        payload = data.get("payload", [{}])[0]
-        symbol = payload.get("instrument", "")
-        ltp = payload.get("last_price")
-        if symbol and ltp is not None:
-            price_data[symbol] = ltp
-            print(f"{symbol}: {ltp}")
+    try:
+        payload = json.loads(message)
+        # Assuming Upstox format — adapt as needed
+        instrument_token = payload.get("instrument_token")
+        if instrument_token:
+            live_data[instrument_token] = payload
+            logger.info(f"Received data for token: {instrument_token}")
+    except Exception as e:
+        logger.error(f"Error parsing message: {e}")
 
 def on_error(ws, error):
-    print("WebSocket error:", error)
+    logger.error(f"WebSocket error: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    print("WebSocket closed")
+    logger.warning("WebSocket connection closed")
 
-def stream_prices():
+def on_open(ws):
     def run():
-        ws = websocket.WebSocketApp(
-            WS_URL,
-            on_open=on_open,
-            on_message=on_message,
-            on_error=on_error,
-            on_close=on_close
-        )
-        ws.run_forever()
-
+        # Subscribe to Nifty 50 tokens
+        token_list = ["nse_eq|11630", "nse_eq|3045"]  # Add full list here
+        subscription_msg = {
+            "action": "subscribe",
+            "params": {"symbols": token_list}
+        }
+        ws.send(json.dumps(subscription_msg))
+        logger.info("Subscribed to tokens")
     threading.Thread(target=run).start()
+
+def get_live_data():
+    return live_data
+
+def start_websocket(api_key, access_token):
+    url = f"wss://example.upstox.com/feed?apiKey={api_key}&accessToken={access_token}"
+    ws = websocket.WebSocketApp(url,
+                                on_open=on_open,
+                                on_message=on_message,
+                                on_error=on_error,
+                                on_close=on_close)
+    ws.run_forever(ping_interval=30, ping_timeout=10)
