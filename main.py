@@ -98,12 +98,12 @@ def authorize_websocket():
         return ws_url
 
 def fetch_nifty_token():
-    url = "https://api.upstox.com/v2/instruments"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    instruments = requests.get(url, headers=headers).json()["data"]
-    for i in instruments:
-        if i["segment"] == "NSE_INDEX" and i["trading_symbol"] == "NIFTY 50":
-            return i["instrument_token"]
+    try:
+        # your logic here
+        token = "some_token_logic"
+        return token
+    finally:
+        print("Token fetch attempt completed.")
 
 def start_websocket():
     ws_url = authorize_websocket()
@@ -222,4 +222,5 @@ if not df.empty:
     chart.plotly_chart(render_chart(df), use_container_width=True)
     col1.metric("Price", f"₹{price}")
     col2
+
 
