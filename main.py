@@ -1,226 +1,193 @@
+Here's the complete Streamlit application with WebSocket integration for real-time Nifty 50 price updates from TradingView:
+
+```python
 import streamlit as st
 import pandas as pd
-import datetime
-import requests
+import numpy as np
 import plotly.graph_objects as go
-import threading
+import websockets
+import asyncio
 import json
-import websocket
-from google.protobuf.json_format import MessageToDict
-from upstox_client.feeder.proto import MarketDataFeedV3_pb2 as pb
-from streamlit_autorefresh import st_autorefresh
+import threading
+import queue
+from datetime import datetime
+import pytz
+from ta.trend import ADXIndicator, AroonIndicator, MACD
+from ta.momentum import RSIIndicator
+from ta.volatility import BollingerBands
 
-# 🔐 Replace with your actual credentials
-ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyZjgxYzA0OTQxZjJkNzMzZmYwOTgiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQ2MjIzNiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NTE3NjAwfQ.VW8Ix1K-Ut7R6mXTUSpEK8bIHX1IpnXaImlfXHZQPkA"
-BOT_TOKEN = "8327184356:AAFGyU3lQdCm7NbdNEDzkRrwmc6NXw6bb54"
-CHAT_ID = "8194487348"
+# Configure Streamlit page
+st.set_page_config(
+    page_title="Nifty 50 Real-Time Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 🔁 Auto-refresh every 10 seconds
-st_autorefresh(interval=10000, limit=None, key="refresh")
-st.set_page_config(layout="wide")
+# Style enhancements
+st.markdown("""
+<style>
+    .metric-card {
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+    .bullish {
+        background-color: rgba(0,255,0,0.1);
+        border-left: 4px solid green;
+    }
+    .bearish {
+        background-color: rgba(255,0,0,0.1);
+        border-left: 4px solid red;
+    }
+    .neutral {
+        background-color: rgba(128,128,128,0.1);
+        border-left: 4px solid gray;
+    }
+    .blink {
+        animation: blink-animation 1s steps(2, start) infinite;
+    }
+    @keyframes blink-animation {
+        to { opacity: 0.5; }
+    }
+    .stAlert { padding: 0.5rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
-# 📦 Session setup
-for key in ["ohlcv", "latest_tick", "last_trend", "ws_thread"]:
-    if key not in st.session_state:
-        st.session_state[key] = {} if key == "ohlcv" else None
+# TradingView WebSocket configuration
+TV_WS_URL = "wss://data.tradingview.com/socket.io/websocket"
+SYMBOL = "NSE:NIFTY50"  # Nifty 50 symbol on TradingView
 
-st.session_state.ohlcv.update({
-    "timestamp": [], "open": [], "high": [], "low": [], "close": [], "volume": []
-})
+# Queue for passing data between threads
+data_queue = queue.Queue()
 
-# 📡 WebSocket handlers
-def on_message(ws, message):
-    try:
-        feed = pb.FeedResponse()
-        feed.ParseFromString(message)
-        data = MessageToDict(feed)
-        payload = data.get("data", {}).get("payload", {})
+# WebSocket client for TradingView
+class TradingViewWebSocket:
+    def __init__(self):
+        self.websocket = None
+        self.active = False
+        self.session_id = "qs_" + str(int(datetime.now().timestamp()))
+        self.packet_count = 1
+        
+    async def connect(self):
+        self.active = True
+        self.websocket = await websockets.connect(TV_WS_URL, ping_interval=5)
+        
+        # Send initialization packets
+        await self.send_packet({"ts": int(datetime.now().timestamp() * 1000)})
+        await self.send_packet({
+            "text": json.dumps({
+                "locale": "en",
+                "request": "quote_session_start",
+                "session": self.session_id,
+                "device": "desktop",
+                "version": "1.0.0"
+            })
+        })
+        
+        # Subscribe to Nifty 50 data
+        await self.send_packet({
+            "text": json.dumps({
+                "m": "quote_session_add_symbols",
+                "p": [self.session_id, SYMBOL],
+                "session": self.session_id
+            })
+        })
+        
+        # Start listening for messages
+        while self.active:
+            try:
+                message = await self.websocket.recv()
+                packet = json.loads(message)
+                
+                if isinstance(packet, list) and len(packet) >= 2:
+                    if packet[0] == "qsd":
+                        symbol = packet[1][1] if isinstance(packet[1], list) else packet[1]
+                        if symbol == SYMBOL:
+                            data = {
+                                "symbol": symbol,
+                                "price": packet[1]["v"]["lp"],
+                                "volume": packet[1]["v"]["volume"],
+                                "change": packet[1]["v"]["ch"],
+                                "change_percent": packet[1]["v"]["chp"],
+                                "bid": packet[1]["v"]["bid"],
+                                "ask": packet[1]["v"]["ask"],
+                                "high": packet[1]["v"]["high_price"],
+                                "low": packet[1]["v"]["low_price"],
+                                "timestamp": datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S')
+                            }
+                            data_queue.put(data)  # Put data in queue for Streamlit
+                            
+            except Exception as e:
+                st.error(f"WebSocket error: {e}")
+                break
+                
+    async def send_packet(self, packet):
+        packet["_ping"] = self.packet_count
+        self.packet_count += 1
+        await self.websocket.send(json.dumps(packet))
+        
+    def disconnect(self):
+        self.active = False
+        if self.websocket:
+            asyncio.get_event_loop().run_until_complete(self.websocket.close())
 
-        print("📦 Incoming Payload:", json.dumps(payload, indent=2))
-
-        if "ltp" in payload:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.latest_tick = {
-                "timestamp": ts,
-                "price": float(payload["ltp"]),
-                "volume": int(payload.get("volume", 0))
-            }
-        else:
-            print("⚠️ 'ltp' missing in payload. Tick skipped.")
-    except Exception as e:
-        print("❌ Protobuf decode failed:", str(e))
-
-def on_open(ws):
-    token = fetch_nifty_token()
-    if token:
-        ws.send(json.dumps({
-            "guid": "nifty-stream",
-            "method": "subscribe",
-            "data": { "instrumentTokens": [token], "mode": "full" }
-        }))
-
-def on_error(ws, err): print("⚠️ WebSocket error:", err)
-def on_close(ws, code, reason): print("🔒 Closed:", code, reason)
-
-# 🔗 Authorization helpers
-import os
-import logging
-import requests
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-def authorize_websocket():
-    try:
-        # Load token from environment variable
-        token = os.getenv("UPSTOX_BEARER_TOKEN")
-        if not token:
-            raise ValueError("Bearer token not found in environment variables.")
-
-        # Construct headers
-        headers = {
-            "Authorization": f"Bearer {token}"
-        }
-
-        # Example: Make a request to get WebSocket URL (replace with actual endpoint)
-        response = requests.get("https://api.upstox.com/websocket/auth", headers=headers)
-
-        if response.status_code != 200:
-            logger.error(f"Authorization failed: {response.status_code} - {response.text}")
-            raise ConnectionError("Failed to authorize WebSocket connection.")
-
-        ws_url = response.json().get("ws_url")
-        if not ws_url:
-            raise ValueError("WebSocket URL not found in response.")
-
-        logger.info("WebSocket authorized successfully.")
-        return ws_url
-
-def fetch_nifty_token():
-    try:
-        # your logic here
-        token = "some_token_logic"
-        return token
-    finally:
-        print("Token fetch attempt completed.")
-
+# Start WebSocket in background thread
 def start_websocket():
-    ws_url = authorize_websocket()
-    if not ws_url or not isinstance(ws_url, str) or ":" not in ws_url:
-        print(f"❌ Invalid WebSocket URL: {ws_url}")
-        return
+    tv = TradingViewWebSocket()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(tv.connect())
 
-    ws = websocket.WebSocketApp(
-        ws_url,
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close
-    )
-    ws.run_forever()
+# Initialize WebSocket thread
+if 'websocket_thread' not in st.session_state:
+    st.session_state.websocket_thread = threading.Thread(target=start_websocket, daemon=True)
+    st.session_state.websocket_thread.start()
 
-# 💾 Tick reader
-def receive_tick():
-    return st.session_state.latest_tick or {
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "price": 0,
-        "volume": 0
-    }
+# Initialize data storage
+if 'live_data' not in st.session_state:
+    st.session_state.live_data = {}
+    st.session_state.price_history = pd.DataFrame(columns=['timestamp', 'price'])
+    st.session_state.last_update = datetime.now()
 
-# 🔄 OHLCV Builder
-def get_live_data():
-    tick = receive_tick()
-    ts = pd.to_datetime(tick["timestamp"])
-    ohlcv = st.session_state.ohlcv
+# Process incoming data from queue
+def process_queue():
+    try:
+        while True:
+            if not data_queue.empty():
+                new_data = data_queue.get()
+                st.session_state.live_data = new_data
+                
+                # Update price history
+                new_row = {
+                    'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')),
+                    'price': new_data['price']
+                }
+                st.session_state.price_history = st.session_state.price_history.append(new_row, ignore_index=True)
+                
+                # Keep only last 100 data points
+                if len(st.session_state.price_history) > 100:
+                    st.session_state.price_history = st.session_state.price_history.iloc[-100:]
+                
+                st.session_state.last_update = datetime.now()
+                
+                data_queue.task_done()
+    except:
+        pass
 
-    if len(ohlcv["timestamp"]) == 0 or ts.minute != pd.to_datetime(ohlcv["timestamp"][-1]).minute:
-        ohlcv["timestamp"].append(ts)
-        ohlcv["open"].append(tick["price"])
-        ohlcv["high"].append(tick["price"])
-        ohlcv["low"].append(tick["price"])
-        ohlcv["close"].append(tick["price"])
-        ohlcv["volume"].append(tick["volume"])
-    else:
-        ohlcv["high"][-1] = max(ohlcv["high"][-1], tick["price"])
-        ohlcv["low"][-1] = min(ohlcv["low"][-1], tick["price"])
-        ohlcv["close"][-1] = tick["price"]
-        ohlcv["volume"][-1] += tick["volume"]
+# Run queue processing in a separate thread
+queue_thread = threading.Thread(target=process_queue, daemon=True)
+queue_thread.start()
 
-    return pd.DataFrame(ohlcv)
-
-# 📊 Indicator logic
+# Technical indicators calculation
 def calculate_indicators(df):
-    ema9 = df["close"].ewm(span=9).mean()
-    ema21 = df["close"].ewm(span=21).mean()
-    rsi = df["close"].rolling(14).apply(
-        lambda x: ((x.diff()[x.diff() > 0].sum() / x.diff().abs().sum()) * 100), raw=True
-    )
-
-    df["H-L"] = df["high"] - df["low"]
-    df["H-PC"] = abs(df["high"] - df["close"].shift(1))
-    df["L-PC"] = abs(df["low"] - df["close"].shift(1))
-    df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-
-    df["+DM"] = (df["high"] - df["high"].shift(1)).clip(lower=0)
-    df["-DM"] = (df["low"].shift(1) - df["low"]).clip(lower=0)
-
-    tr_smooth = df["TR"].rolling(14).mean()
-    plus_di = 100 * df["+DM"].rolling(14).mean() / tr_smooth
-    minus_di = 100 * df["-DM"].rolling(14).mean() / tr_smooth
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(14).mean()
-
-    return {
-        "RSI": rsi.iloc[-1] if not rsi.empty else None,
-        "EMA_9": ema9.iloc[-1] if not ema9.empty else None,
-        "EMA_21": ema21.iloc[-1] if not ema21.empty else None,
-        "ADX": adx.iloc[-1] if not adx.empty else None
-    }
-
-# 🧠 Trend detection
-def check_trend(indicators):
-    if indicators["EMA_9"] > indicators["EMA_21"] and indicators["ADX"] > 25 and indicators["RSI"] > 60:
-        return "Strong Bullish"
-    elif indicators["EMA_9"] < indicators["EMA_21"] and indicators["ADX"] > 25 and indicators["RSI"] < 40:
-        return "Strong Bearish"
-    return "Neutral"
-
-def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = { "chat_id": CHAT_ID, "text": message }
-    return requests.post(url, data=data).status_code == 200
-
-# 📈 Chart rendering
-def render_chart(df):
-    fig = go.Figure(data=[go.Candlestick(
-        x=df["timestamp"], open=df["open"],
-        high=df["high"], low=df["low"], close=df["close"]
-    )])
-    fig.update_layout(title="Nifty 50 Live Candlestick", xaxis_rangeslider_visible=False)
-    return fig
-
-# 🚀 Start WebSocket thread if not already running
-if not st.session_state.ws_thread:
-    thread = threading.Thread(target=start_websocket)
-    thread.start()
-    st.session_state.ws_thread = thread
-
-# 🚀 Dashboard Execution
-df = get_live_data()
-status = st.empty()
-chart = st.empty()
-col1, col2, col3, col4 = st.columns(4)
-
-if not df.empty:
-    indicators = calculate_indicators(df)
-    trend = check_trend(indicators)
-    ts = df["timestamp"].iloc[-1]
-    price = df["close"].iloc[-1]
-
-    status.success(f"✅ Live Feed • Last updated: {ts}")
-    chart.plotly_chart(render_chart(df), use_container_width=True)
-    col1.metric("Price", f"₹{price}")
-    col2
-
-
+    # Convert to numeric
+    df['price'] = pd.to_numeric(df['price'])
+    
+    # Calculate indicators
+    df = df.sort_values('timestamp').reset_index(drop=True)
+    
+    # ADX
+    adx_indicator = ADXIndicator(
+        high=df['price'] * 1.001, 
