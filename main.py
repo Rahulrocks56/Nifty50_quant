@@ -11,9 +11,9 @@ from upstox_client.feeder.proto import MarketDataFeedV3_pb2 as pb
 from streamlit_autorefresh import st_autorefresh
 
 # 🔐 Replace with your actual credentials
-ACCESS_TOKEN = "eyaWQiOiJza192MBsy0vfI"
-BOT_TOKEN = "8327184356:zkRrwmc6NXw6bb54"
-CHAT_ID = "819348"
+ACCESS_TOKEN = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyZjgxYzA0OTQxZjJkNzMzZmYwOTgiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQ2MjIzNiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NTE3NjAwfQ.VW8Ix1K-Ut7R6mXTUSpEK8bIHX1IpnXaImlfXHZQPkA"
+BOT_TOKEN = "8327184356:AAFGyU3lQdCm7NbdNEDzkRrwmc6NXw6bb54"
+CHAT_ID = "8194487348"
 
 # 🔁 Auto-refresh every 10 seconds
 st_autorefresh(interval=10000, limit=None, key="refresh")
@@ -36,7 +36,6 @@ def on_message(ws, message):
         data = MessageToDict(feed)
         payload = data.get("data", {}).get("payload", {})
 
-        # 🔍 Log the full payload to verify structure
         print("📦 Incoming Payload:", json.dumps(payload, indent=2))
 
         if "ltp" in payload:
@@ -64,12 +63,10 @@ def on_error(ws, err): print("⚠️ WebSocket error:", err)
 def on_close(ws, code, reason): print("🔒 Closed:", code, reason)
 
 # 🔗 Authorization helpers
-import requests
-
 def authorize_websocket():
-    url = "https://api.upstox.com/feed/authorize"  # Replace with your actual URL
+    url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"  # ✅ Corrected URL
     headers = {
-        "Authorization": "Bearer your_token_here",  # Make sure token is correct
+        "Authorization": f"Bearer {eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyZjgxYzA0OTQxZjJkNzMzZmYwOTgiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQ2MjIzNiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NTE3NjAwfQ.VW8Ix1K-Ut7R6mXTUSpEK8bIHX1IpnXaImlfXHZQPkA}",  
         "Content-Type": "application/json"
     }
 
@@ -78,7 +75,6 @@ def authorize_websocket():
     try:
         resp_json = response.json()
         print("🔍 Auth Response:", json.dumps(resp_json, indent=2))
-
         return resp_json["data"]["authorization"]["url"]
     except KeyError as e:
         print(f"❌ KeyError: Missing {e} in response. Full response:\n{resp_json}")
@@ -99,7 +95,7 @@ def start_websocket():
     ws_url = authorize_websocket()
     if not ws_url or not isinstance(ws_url, str) or ":" not in ws_url:
         print(f"❌ Invalid WebSocket URL: {ws_url}")
-        return  # Abort connection
+        return
 
     ws = websocket.WebSocketApp(
         ws_url,
@@ -190,6 +186,12 @@ def render_chart(df):
     fig.update_layout(title="Nifty 50 Live Candlestick", xaxis_rangeslider_visible=False)
     return fig
 
+# 🚀 Start WebSocket thread if not already running
+if not st.session_state.ws_thread:
+    thread = threading.Thread(target=start_websocket)
+    thread.start()
+    st.session_state.ws_thread = thread
+
 # 🚀 Dashboard Execution
 df = get_live_data()
 status = st.empty()
@@ -205,19 +207,4 @@ if not df.empty:
     status.success(f"✅ Live Feed • Last updated: {ts}")
     chart.plotly_chart(render_chart(df), use_container_width=True)
     col1.metric("Price", f"₹{price}")
-    col2.metric("Trend", trend)
-    col3.metric("RSI", f"{indicators['RSI']:.2f}")
-    col4.metric("ADX", f"{indicators['ADX']:.2f}")
-
-    if trend != st.session_state.last_trend and trend != "Neutral":
-        alert_msg = f"📊 {trend} Signal • RSI: {indicators['RSI']:.2f} • ADX: {indicators['ADX']:.2f}"
-        if send_telegram_alert(alert_msg):
-            st.toast(f"Telegram alert sent: {alert_msg}")
-        else:
-            st.warning("⚠️ Telegram alert failed.")
-
-
-
-
-
-
+    col2
