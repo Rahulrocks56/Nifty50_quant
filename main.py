@@ -42,13 +42,6 @@ st.markdown("""
         background-color: rgba(128,128,128,0.1);
         border-left: 4px solid gray;
     }
-    .blink {
-        animation: blink-animation 1s steps(2, start) infinite;
-    }
-    @keyframes blink-animation {
-        to { opacity: 0.5; }
-    }
-    .stAlert { padding: 0.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -187,5 +180,63 @@ def calculate_indicators(df):
     
     # ADX
     adx_indicator = ADXIndicator(
-        high=df['price'] * 1.001, 
+        high=df['price'] * 1.001,  # Simulating high prices
+        low=df['price'] * 0.999,   # Simulating low prices
+        close=df['price'],
+        window=14
+    )
+    df['ADX'] = adx_indicator.adx()
+    
+    # Aroon
+    aroon_indicator = AroonIndicator(df['price'], window=25)
+    df['Aroon_Up'] = aroon_indicator.aroon_up()
+    df['Aroon_Down'] = aroon_indicator.aroon_down()
+    
+    # MACD
+    macd = MACD(df['price'], window_slow=26, window_fast=12, window_sign=9)
+    df['MACD'] = macd.macd()
+    df['MACD_Signal'] = macd.macd_signal()
+    df['MACD_Hist'] = macd.macd_diff()
+    
+    # RSI
+    rsi_indicator = RSIIndicator(df['price'], window=14)
+    df['RSI'] = rsi_indicator.rsi()
+    
+    # Bollinger Bands
+    bb_indicator = BollingerBands(df['price'], window=20, window_dev=2)
+    df['BB_upper'] = bb_indicator.bollinger_hband()
+    df['BB_lower'] = bb_indicator.bollinger_lband()
+    
+    return df
 
+# Main app logic
+st.title("Nifty 50 Real-Time Dashboard")
+
+# Display live data
+if st.session_state.live_data:
+    live_data = st.session_state.live_data
+    st.metric("Nifty 50 Price", f"₹{live_data['price']:.2f}", f"Change: {live_data['change']:.2f} ({live_data['change_percent']:.2f}%)")
+else:
+    st.write("Waiting for live data...")
+
+# Calculate indicators if we have enough data
+if len(st.session_state.price_history) > 1:
+    indicators_df = calculate_indicators(st.session_state.price_history)
+    
+    # Display indicators
+    st.subheader("Technical Indicators")
+    st.write(indicators_df.tail(1))  # Show latest indicators
+
+    # Plotting
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=indicators_df['timestamp'], y=indicators_df['price'], name='Price', line=dict(color='blue')))
+    fig.add_trace(go.Scatter(x=indicators_df['timestamp'], y=indicators_df['BB_upper'], name='BB Upper', line=dict(color='red', dash='dash')))
+    fig.add_trace(go.Scatter(x=indicators_df['timestamp'], y=indicators_df['BB_lower'], name='BB Lower', line=dict(color='green', dash='dash')))
+    fig.update_layout(title='Price with Bollinger Bands', xaxis_title='Time', yaxis_title='Price')
+    st.plotly_chart(fig)
+
+# Data disclaimer
+st.caption("""
+**Data Source**: TradingView | **Disclaimer**: This dashboard is for educational purposes only. 
+The information provided should not be construed as financial advice.
+""")
