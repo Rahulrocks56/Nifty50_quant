@@ -1,6 +1,3 @@
-Here's the complete Streamlit application with WebSocket integration for real-time Nifty 50 price updates from TradingView:
-
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -191,3 +188,4 @@ def calculate_indicators(df):
     # ADX
     adx_indicator = ADXIndicator(
         high=df['price'] * 1.001, 
+
