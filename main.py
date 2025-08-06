@@ -98,7 +98,13 @@ class TradingViewWebSocket:
 
 # Initialize WebSocket connection
 tv_ws = TradingViewWebSocket()
-ws_thread = threading.Thread(target=lambda: asyncio.get_event_loop().run_until_complete(tv_ws.connect()))
+
+def start_websocket():
+    loop = asyncio.new_event_loop()  # Create a new event loop
+    asyncio.set_event_loop(loop)      # Set the new event loop
+    loop.run_until_complete(tv_ws.connect())  # Run the connect method
+
+ws_thread = threading.Thread(target=start_websocket)
 ws_thread.daemon = True
 ws_thread.start()
 
