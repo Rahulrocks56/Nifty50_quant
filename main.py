@@ -63,25 +63,39 @@ def on_error(ws, err): print("⚠️ WebSocket error:", err)
 def on_close(ws, code, reason): print("🔒 Closed:", code, reason)
 
 # 🔗 Authorization helpers
-def authorize_websocket():
-    url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"  # ✅ Corrected URL
-    headers = {
-        "Authorization": f"Bearer {eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiI3UkFHVjgiLCJqdGkiOiI2ODkyZjgxYzA0OTQxZjJkNzMzZmYwOTgiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6ZmFsc2UsImlhdCI6MTc1NDQ2MjIzNiwiaXNzIjoidWRhcGktZ2F0ZXdheS1zZXJ2aWNlIiwiZXhwIjoxNzU0NTE3NjAwfQ.VW8Ix1K-Ut7R6mXTUSpEK8bIHX1IpnXaImlfXHZQPkA}",  
-        "Content-Type": "application/json"
-    }
+import os
+import logging
+import requests
 
-    response = requests.post(url, headers=headers)
-    
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def authorize_websocket():
     try:
-        resp_json = response.json()
-        print("🔍 Auth Response:", json.dumps(resp_json, indent=2))
-        return resp_json["data"]["authorization"]["url"]
-    except KeyError as e:
-        print(f"❌ KeyError: Missing {e} in response. Full response:\n{resp_json}")
-        return None
-    except Exception as e:
-        print(f"❌ Exception while authorizing WebSocket:", str(e))
-        return None
+        # Load token from environment variable
+        token = os.getenv("UPSTOX_BEARER_TOKEN")
+        if not token:
+            raise ValueError("Bearer token not found in environment variables.")
+
+        # Construct headers
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+
+        # Example: Make a request to get WebSocket URL (replace with actual endpoint)
+        response = requests.get("https://api.upstox.com/websocket/auth", headers=headers)
+
+        if response.status_code != 200:
+            logger.error(f"Authorization failed: {response.status_code} - {response.text}")
+            raise ConnectionError("Failed to authorize WebSocket connection.")
+
+        ws_url = response.json().get("ws_url")
+        if not ws_url:
+            raise ValueError("WebSocket URL not found in response.")
+
+        logger.info("WebSocket authorized successfully.")
+        return ws_url
 
 def fetch_nifty_token():
     url = "https://api.upstox.com/v2/instruments"
@@ -208,3 +222,4 @@ if not df.empty:
     chart.plotly_chart(render_chart(df), use_container_width=True)
     col1.metric("Price", f"₹{price}")
     col2
+
