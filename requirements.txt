@@ -1,1 +1,7 @@
-pip install streamlit websockets pandas numpy plotly ta pytz
+pip install streamlit
+pip install websockets
+pip install pandas
+pip install numpy
+pip install plotly
+pip install ta
+pip install pytz
